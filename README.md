@@ -16,7 +16,7 @@ UABの整形機能は実装していませんので、正規表現なりなん�
 
 ## 使用API
 
-[matsurihime API](api.matsurihi.me)  
+[matsurihime API](https://api.matsurihi.me)  
 
 ---
 
