@@ -1,37 +1,28 @@
-## Welcome to GitHub Pages
+# MLTDAssetBundleDownloader
+ミリシタのアセットバンドルをダウンロードするツール
 
-You can use the [editor on GitHub](https://github.com/XyLe-GBP/MLTDAssetBundleDownloader/edit/gh-pages/index.md) to maintain and preview the content for your website in Markdown files.
+---
 
-Whenever you commit to this repository, GitHub Pages will run [Jekyll](https://jekyllrb.com/) to rebuild the pages in your site, from the content in your Markdown files.
+## 使用方法
 
-### Markdown
+以下のランタイムをPCにインストールしてください。  
+[Microsoft Visual C++ 2015-2019 再頒布可能パッケージ](https://aka.ms/vs/16/release/vc_redist.x64.exe)  
 
-Markdown is a lightweight and easy-to-use syntax for styling your writing. It includes conventions for
+本ツールはインターネット接続が必須です。  
+UABの整形機能は実装していませんので、正規表現なりなんなりを使ってご自身で整形してください。  
+(整形は今後のアップデートで対応予定です)  
 
-```markdown
-Syntax highlighted code block
+---
 
-# Header 1
-## Header 2
-### Header 3
+## 使用API
 
-- Bulleted
-- List
+[matsurihime API](https://api.matsurihi.me)  
 
-1. Numbered
-2. List
+---
 
-**Bold** and _Italic_ and `Code` text
+## ライセンスについて
 
-[Link](url) and ![Image](src)
-```
+本ツールはMITライセンスでリリースされています。  
+改変、複製、改良は自由ですが、配布の際には著作権・ライセンス表示をお願いします。  
+本ツールを使用したことによって発生した不具合や損害に関して、作成者は一切の責任を負わないものとします。  
 
-For more details see [GitHub Flavored Markdown](https://guides.github.com/features/mastering-markdown/).
-
-### Jekyll Themes
-
-Your Pages site will use the layout and styles from the Jekyll theme you have selected in your [repository settings](https://github.com/XyLe-GBP/MLTDAssetBundleDownloader/settings). The name of this theme is saved in the Jekyll `_config.yml` configuration file.
-
-### Support or Contact
-
-Having trouble with Pages? Check out our [documentation](https://docs.github.com/categories/github-pages-basics/) or [contact support](https://support.github.com/contact) and we’ll help you sort it out.
