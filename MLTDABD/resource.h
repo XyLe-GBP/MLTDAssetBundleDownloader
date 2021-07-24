@@ -19,6 +19,9 @@
 #define IDR_WAVE_HRK_PKR                142
 #define IDR_WAVE6                       143
 #define IDR_WAVE_HRK_PRD                143
+#define IDR_WAVE_HRK_DOM                144
+#define IDD_DIALOG1                     145
+#define IDD_PROGRESSDIALOG              145
 #define IDC_COMBO_VERSION               1000
 #define IDC_STATIC_IMAGE                1001
 #define IDC_RADIO_PRT_ANDROID           1002
@@ -33,6 +36,9 @@
 #define IDC_STATIC_HYPER1               1011
 #define IDC_STATIC_VERSIONTEXT          1012
 #define IDC_STATIC_ICON                 1013
+#define IDC_COMBO_UABRES                1014
+#define IDC_BUTTON_UABDOWNLOAD          1015
+#define IDC_BUTTON_UABM_READ            1016
 #define ID_32771                        32771
 #define ID_32772                        32772
 #define ID_32773                        32773
@@ -41,9 +47,9 @@
 // 
 #ifdef APSTUDIO_INVOKED
 #ifndef APSTUDIO_READONLY_SYMBOLS
-#define _APS_NEXT_RESOURCE_VALUE        144
+#define _APS_NEXT_RESOURCE_VALUE        147
 #define _APS_NEXT_COMMAND_VALUE         32774
-#define _APS_NEXT_CONTROL_VALUE         1014
+#define _APS_NEXT_CONTROL_VALUE         1017
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif

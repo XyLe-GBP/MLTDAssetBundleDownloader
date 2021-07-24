@@ -60,11 +60,11 @@ void MLTDAssetBundleVersionCheck(CString &VersionBuf, CString &DateBuf, CString 
 		NULL,
 		0);
 
-	if (bHttpSendRequest == 0) {//bHttpSendRequestが0の場合はインターネットに接続されていないので、エラーを返す。
+	if (bHttpSendRequest == 0) {
 		::InternetCloseHandle(hNet);
 		::InternetCloseHandle(hHttpRequest);
 		::InternetCloseHandle(hHttpSession);
-		return;//106:ERR_INTERNET_DISCONNECTED
+		return;
 	}
 
 	/* 返されたコンテンツの長さを取得 */
@@ -842,8 +842,7 @@ CString AppUpdateCheck() {
 
 
 CString AppCurrentVersionCheck() {
-	DWORD dwLen;
-	DWORD dwHandle;
+	DWORD dwLen, dwHandle;
 	TCHAR cBuf[256] = { NULL };
 	wchar_t Path[MAX_PATH + 1];
 
@@ -871,7 +870,7 @@ CString AppCurrentVersionCheck() {
 
 
 bool DownloadFile(LPCTSTR pszURL, LPCTSTR pszLocalFile, DWORD dwBuffSize) {
-	TCHAR		pszHeader[] = _T("Accept: */*\r\n\r\n");
+	//TCHAR		pszHeader[] = _T("Accept: */*\r\n\r\n");
 	BOOL		ret;
 	DWORD		dwReadSize;
 	DWORD		dwWrittenSize;
@@ -884,7 +883,7 @@ bool DownloadFile(LPCTSTR pszURL, LPCTSTR pszLocalFile, DWORD dwBuffSize) {
 	if (hInternet == NULL)
 		return	false;
 
-	hConnect = ::InternetOpenUrl(hInternet, pszURL, pszHeader, -1, INTERNET_FLAG_DONT_CACHE, 0);
+	hConnect = ::InternetOpenUrl(hInternet, pszURL, NULL, -1, INTERNET_FLAG_DONT_CACHE, 0);
 	pcbBuff = new BYTE[dwBuffSize];
 	if (hConnect == NULL || pcbBuff == NULL)
 	{
@@ -941,12 +940,48 @@ DWORD GetFileSizeStat(const wchar_t* fp) {
 }
 
 
+string AfxReplaceStr(string& replacedStr, string from, string to) {
+	const size_t pos = replacedStr.find(from);
+	const size_t len = from.length();
+
+	if (pos == string::npos || from.empty()) {
+		return replacedStr;
+	}
+
+	return replacedStr.replace(pos, len, to);
+}
+
+
+string TWStringToString(const wstring& arg_wstr)
+{
+	size_t length = arg_wstr.size();
+	size_t convLength;
+	char* c = (char*)malloc(sizeof(char) * length * 2);
+	wcstombs_s(&convLength, c, sizeof(char) * length * 2, arg_wstr.c_str(), length * 2);
+	string result(c);
+	free(c);
+
+	return result;
+};
+
+
+wstring StringToWString(const string& arg_str)
+{
+	size_t length = arg_str.size();
+	size_t convLength;
+	wchar_t* wc = (wchar_t*)malloc(sizeof(wchar_t) * (length + 2));
+	mbstowcs_s(&convLength, wc, length + 1, arg_str.c_str(), _TRUNCATE);
+	wstring str(wc);
+	free(wc);
+
+	return str;
+};
+
 //VersionInfoString
 
 
 CString APP_VER() {
-	AFX_MANAGE_STATE(AfxGetStaticModuleState());
-	CString FUNCTION = _T("1.0.0.1 (v1001)"); //major.minor.build.revision
+	CString FUNCTION = _T("1.1.0.1 (v1101)"); //major.minor.build.revision
 	return FUNCTION;
 }
 

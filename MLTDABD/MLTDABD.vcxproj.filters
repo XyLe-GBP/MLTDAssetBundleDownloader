@@ -36,6 +36,9 @@
     <ClInclude Include="MLTDABD.common.h">
       <Filter>ヘッダー ファイル</Filter>
     </ClInclude>
+    <ClInclude Include="PROGRESSDLG.h">
+      <Filter>ヘッダー ファイル</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="MLTDABD.cpp">
@@ -48,6 +51,9 @@
       <Filter>ソース ファイル</Filter>
     </ClCompile>
     <ClCompile Include="MLTDABD.common.cpp">
+      <Filter>ソース ファイル</Filter>
+    </ClCompile>
+    <ClCompile Include="PROGRESSDLG.cpp">
       <Filter>ソース ファイル</Filter>
     </ClCompile>
   </ItemGroup>
@@ -98,6 +104,9 @@
       <Filter>リソース ファイル</Filter>
     </Media>
     <Media Include="res\sound_har_se_prd.wav">
+      <Filter>リソース ファイル</Filter>
+    </Media>
+    <Media Include="res\IDR_WAVE_HRK_DOM.wav">
       <Filter>リソース ファイル</Filter>
     </Media>
   </ItemGroup>

@@ -39,10 +39,14 @@ public:
 	afx_msg void OnBnClickedRadioPrtIos();
 	afx_msg void OnCbnSelchangeComboVersion();
 	afx_msg void OnBnClickedButtonDownload();
-	CComboBox m_hCmbAssetVer;
-	CStatic m_hStatic_Hash;
-	CStatic m_hStatic_Date;
 	afx_msg void OnBnClickedButtonBundleinfoUpdate();
 	afx_msg void OnBnClickedRadioSrvOriginal();
 	afx_msg void OnBnClickedRadioSrvMirror();
+	CComboBox m_hCmbAssetVer;
+	CStatic m_hStatic_Hash;
+	CStatic m_hStatic_Date;
+	//afx_msg void OnBnClickedButtonUabmRead();
+	CComboBox m_hCmbUabRes;
+	afx_msg void OnCbnSelchangeComboUabres();
+	afx_msg void OnBnClickedButtonUabdownload();
 };
