@@ -1,5 +1,6 @@
 # MLTDAssetBundleDownloader
-ミリシタのアセットバンドルをダウンロードするツール
+MLTDのアセットバンドル(.unity3d)をダウンロードするツール
+![Downloads](https://img.shields.io/github/downloads/XyLe-GBP/MLTDAssetBundleDownloader/total.svg)
 
 ---
 
@@ -8,20 +9,18 @@
 以下のランタイムをPCにインストールしてください。  
 [Microsoft Visual C++ 2015-2019 再頒布可能パッケージ](https://aka.ms/vs/16/release/vc_redist.x64.exe)  
 
-本ツールはインターネット接続が必須です。  
-UABの整形機能は実装していませんので、正規表現なりなんなりを使ってご自身で整形してください。  
-(整形は今後のアップデートで対応予定です)  
+本ツールを利用するにはインターネット接続が必須です。  
 
 ---
 
-## 使用API
+## 使用物
 
-[matsurihime API](https://api.matsurihi.me)  
+[matsurihi.me API](https://api.matsurihi.me)  
+[Unity AssetBundle Manifest Replacer](https://github.com/XyLe-GBP/UnityAssetBundleManifestReplacer)
 
 ---
 
 ## ライセンスについて
 
 本ツールはMITライセンスでリリースされています。  
-改変、複製、改良は自由ですが、配布の際には著作権・ライセンス表示をお願いします。  
 本ツールを使用したことによって発生した不具合や損害に関して、作成者は一切の責任を負わないものとします。  
