@@ -977,6 +977,13 @@ wstring StringToWString(const string& arg_str)
 	return str;
 };
 
+LPWSTR CStringToLPWSTR(const CString& arg_CString_str)
+{
+	LPWSTR dl_msgbuf = new WCHAR[arg_CString_str.GetLength() + 1];
+	wcscpy_s(dl_msgbuf, static_cast<rsize_t>(arg_CString_str.GetLength()) + 1, arg_CString_str);
+	return dl_msgbuf;
+}
+
 //VersionInfoString
 
 

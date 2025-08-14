@@ -17,6 +17,28 @@
 
 #define SAFE_FREE(ptr) { free(ptr); ptr = NULL; }
 #define SAFE_DELETE(ptr) { delete ptr; ptr = NULL; }
+#define WM_MYMSG (WM_APP + 1)
+
+// リードスレッド停止用のメッセージID
+#define WM_USER_READ_TERMINATE (WM_USER + 100)
+
+HANDLE CMLTDABDDlg::m_hCancelEvent;
+CWinThread* CMLTDABDDlg::m_pWorkerThread;
+
+CComboBox CMLTDABDDlg::m_hCmbUabRes;
+
+UINT CMLTDABDDlg::ProgressThreadFlag = 255;
+UINT CMLTDABDDlg::SuspendFlag = 0;
+UINT CMLTDABDDlg::PROGRESS_COUNT = 0;
+UINT CMLTDABDDlg::ExceptionFlag = 0;
+DWORD CMLTDABDDlg::m_hLastError;
+
+CString CMLTDABDDlg::m_hRet;
+CString CMLTDABDDlg::m_hSavePath = _T("");
+CString CMLTDABDDlg::m_hDLURI = _T("");
+CString CMLTDABDDlg::m_hShapedFilePath = _T("");
+CString CMLTDABDDlg::m_hDownloadMsg = _T("Downloading: ");
+TCHAR* CMLTDABDDlg::m_hSavepathT;
 
 // アプリケーションのバージョン情報に使われる CAboutDlg ダイアログ
 
@@ -180,13 +202,15 @@ void CAboutDlg::OnDestroy()
 
 // CMLTDABDDlg ダイアログ
 
-
+IMPLEMENT_DYNAMIC(CMLTDABDDlg, CDialogEx)
 
 CMLTDABDDlg::CMLTDABDDlg(CWnd* pParent /*=nullptr*/)
 	: CDialogEx(IDD_MLTDABD_DIALOG, pParent)
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDI_ICON_ML);
 }
+
+CMLTDABDDlg::~CMLTDABDDlg(){}
 
 void CMLTDABDDlg::DoDataExchange(CDataExchange* pDX)
 {
@@ -195,6 +219,299 @@ void CMLTDABDDlg::DoDataExchange(CDataExchange* pDX)
 	DDX_Control(pDX, IDC_STATIC_HASH, m_hStatic_Hash);
 	DDX_Control(pDX, IDC_STATIC_UPDATE_DATE, m_hStatic_Date);
 	DDX_Control(pDX, IDC_COMBO_UABRES, m_hCmbUabRes);
+}
+
+static UINT AFX_CDECL ABDownloadWorkThreadProc(LPVOID pParam)
+{
+	PROGRESSDLG* pDlg = reinterpret_cast<PROGRESSDLG*>(pParam);
+	HANDLE hCancel = CMLTDABDDlg::m_hCancelEvent;
+	if (hCancel && ::WaitForSingleObject(hCancel, 0) == WAIT_OBJECT_0) {
+		pDlg->SendMessage(WM_PROCESS_FINISHED, 0, 0);
+		return 0;
+	}
+
+	// ── ここで重い処理を実行 ──
+
+	CMLTDABDDlg::ProgressThreadFlag = 0;
+	Sleep(4000);
+	pDlg->SendMessage(WM_APPEND_TEXT, 0, reinterpret_cast<LPARAM>(CStringToLPWSTR(CMLTDABDDlg::m_hDownloadMsg)));
+	
+	while (!DownloadFile(CMLTDABDDlg::m_hDLURI, CMLTDABDDlg::m_hSavePath, 1024)) {
+		// キャンセルが要求されていたら即終了
+		if (hCancel && ::WaitForSingleObject(hCancel, 0) == WAIT_OBJECT_0)
+			goto CLEANUP;
+	}
+	//pDlg->SendMessage(WM_APPEND_TEXT, 0, reinterpret_cast<LPARAM>(L"Download Completed."));
+	//Sleep(2000);
+
+	if (CMLTDABDDlg::SuspendFlag == 1) {
+		CMLTDABDDlg::ProgressThreadFlag = 255;
+		pDlg->SendMessage(WM_PROCESS_FINISHED, 0, 0);
+		return 0;
+	}
+	else {
+		// 処理完了をダイアログに通知（UI スレッド側で EndDialog を呼ぶ）
+		pDlg->SendMessage(WM_PROCESS_FINISHED, 0, 0);
+	}
+	
+	CMLTDABDDlg::ProgressThreadFlag = 255;
+	return 0;
+
+CLEANUP:
+	CMLTDABDDlg::SuspendFlag = 1;
+	pDlg->SendMessage(WM_PROCESS_FINISHED, 0, 0);
+	CMLTDABDDlg::ProgressThreadFlag = 255;
+	return 0;
+}
+
+static UINT AFX_CDECL ShapingWorkThreadProc(LPVOID pParam)
+{
+	PROGRESSDLG* pDlg = reinterpret_cast<PROGRESSDLG*>(pParam);
+	HANDLE hCancel = CMLTDABDDlg::m_hCancelEvent;
+	if (hCancel && ::WaitForSingleObject(hCancel, 0) == WAIT_OBJECT_0) {
+		pDlg->SendMessage(WM_PROCESS_FINISHED, 0, 0);
+		return 0;
+	}
+
+	// ── ここで重い処理を実行 ──
+
+	CMLTDABDDlg::ProgressThreadFlag = 1;
+
+	// パイプ作成（標準出力 → 読み取り用 hRead）
+	SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
+	HANDLE hRead = NULL, hWrite = NULL;
+	if (!::CreatePipe(&hRead, &hWrite, &sa, 0)) {
+		OutputDebugString(_T("CreatePipe Error."));
+		CMLTDABDDlg::ExceptionFlag = 1;
+		goto DONE;
+	}
+
+	// 読み取りハンドルは継承しない
+	::SetHandleInformation(hRead, HANDLE_FLAG_INHERIT, 0);
+
+	// STARTUPINFO 設定（ハンドル継承 & 非表示）
+	STARTUPINFO si;
+	ZeroMemory(&si, sizeof(si));
+	PROCESS_INFORMATION pi;
+	ZeroMemory(&pi, sizeof(pi));
+	si.cb = sizeof(si);
+	si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+	si.hStdOutput = hWrite;
+	si.hStdError = hWrite;
+	si.wShowWindow = SW_HIDE;
+
+	TCHAR cmdLine[256];
+	_tcscpy_s(cmdLine, _countof(cmdLine), CMLTDABDDlg::m_hSavepathT);
+
+	// CREATE_NO_WINDOW でコンソールを非表示に起動
+	if (!::CreateProcess(
+		NULL,            // アプリ名
+		cmdLine,		 // コマンドライン
+		NULL, NULL,      // セキュリティ属性
+		TRUE,            // ハンドル継承
+		CREATE_NO_WINDOW,// プロセス作成フラグ
+		NULL,            // 環境
+		NULL,            // カレントディレクトリ
+		&si, &pi))
+	{
+		DWORD err = ::GetLastError();
+		CMLTDABDDlg::m_hLastError = err;
+		CString errMsg;
+		errMsg.Format(_T("CreateProcess failed with error %u\r\n"), err);
+		// 失敗メッセージをダイアログに追記
+		LPWSTR buf = new WCHAR[errMsg.GetLength() + 1];
+		wcscpy_s(buf, static_cast<rsize_t>(errMsg.GetLength()) + 1, errMsg);
+		pDlg->SendMessage(WM_APPEND_TEXT, 0, reinterpret_cast<LPARAM>(buf));
+
+		::CloseHandle(hWrite);
+		::CloseHandle(hRead);
+		CMLTDABDDlg::ExceptionFlag = 1;
+		goto DONE;
+	}
+
+	// 不要な書き込みハンドルをクローズ
+	::CloseHandle(hWrite);
+
+	// パイプからの読み取りループ
+	const DWORD BUFSIZE = 4096;
+	CHAR  buffer[BUFSIZE]{};
+	DWORD bytesRead = 0;
+	while (::ReadFile(hRead, buffer, BUFSIZE - 1, &bytesRead, NULL) && bytesRead)
+	{
+		// キャンセルが要求されていたら即終了
+		if (hCancel && ::WaitForSingleObject(hCancel, 0) == WAIT_OBJECT_0)
+			goto CLEANUP;
+
+		buffer[bytesRead] = '\0';
+
+		// ANSI→Unicode + 改行コード変換
+		CString chunk;
+		{
+			// MultiByteToWideChar で変換
+			int n = ::MultiByteToWideChar(CP_ACP, 0, buffer, -1, NULL, 0);
+			WCHAR* wbuf = new WCHAR[n];
+			::MultiByteToWideChar(CP_ACP, 0, buffer, -1, wbuf, n);
+			chunk = wbuf;
+			delete[] wbuf;
+		}
+		chunk.Replace(_T("\n"), _T("\r\n"));
+
+		// ダイアログに追記をポスト
+		int len = chunk.GetLength() + 1;
+		WCHAR* heapBuf = new WCHAR[len];
+		wcscpy_s(heapBuf, len, static_cast<LPCTSTR>(chunk));
+		pDlg->SendMessage(WM_APPEND_TEXT, 0, reinterpret_cast<LPARAM>(heapBuf));
+	}
+
+	::CloseHandle(hRead);
+
+	// プロセス終了待ち
+	::WaitForSingleObject(pi.hProcess, INFINITE);
+	::CloseHandle(pi.hProcess);
+	::CloseHandle(pi.hThread);
+
+	if (CMLTDABDDlg::SuspendFlag == 1) {
+		CMLTDABDDlg::ProgressThreadFlag = 255;
+		pDlg->PostMessage(WM_PROCESS_FINISHED, 0, 0);
+		return 0;
+	}
+	else {
+		goto DONE;
+	}
+
+DONE:
+	// ダイアログを閉じる
+	pDlg->PostMessage(WM_PROCESS_FINISHED, 0, 0);
+	CMLTDABDDlg::ProgressThreadFlag = 255;
+	return 0;
+CLEANUP:
+	::CloseHandle(hRead);
+	::WaitForSingleObject(pi.hProcess, INFINITE);
+	::CloseHandle(pi.hProcess);
+	::CloseHandle(pi.hThread);
+	CMLTDABDDlg::SuspendFlag = 1;
+	pDlg->SendMessage(WM_PROCESS_FINISHED, 0, 0);
+	CMLTDABDDlg::ProgressThreadFlag = 255;
+	return 0;
+}
+
+static UINT AFX_CDECL MainShapingWorkThreadProc(LPVOID pParam)
+{
+	PROGRESSDLG* pDlg = reinterpret_cast<PROGRESSDLG*>(pParam);
+	HANDLE hCancel = CMLTDABDDlg::m_hCancelEvent;
+	if (hCancel && ::WaitForSingleObject(hCancel, 0) == WAIT_OBJECT_0) {
+		pDlg->SendMessage(WM_PROCESS_FINISHED, 0, 0);
+		return 0;
+	}
+
+	// ── ここで重い処理を実行 ──
+	CMLTDABDDlg::ProgressThreadFlag = 2;
+	Sleep(4000);
+	
+	//pDlg->SendMessage(WM_APPEND_TEXT, 0, reinterpret_cast<LPARAM>(L"ifstream..."));
+
+	std::ifstream fin(CMLTDABDDlg::m_hShapedFilePath);
+	if (!fin) {
+		CMLTDABDDlg::ExceptionFlag = 1;
+		pDlg->PostMessage(WM_PROCESS_FINISHED, 0, 0);
+		return -1;
+	}
+
+	pDlg->SendMessage(WM_APPEND_TEXT, 0, reinterpret_cast<LPARAM>(L"execute ifstream and ofstream..."));
+	Sleep(2000);
+
+	std::ofstream fout(".\\uabm.abddata");
+	if (!fout) {
+		CMLTDABDDlg::ExceptionFlag = 1;
+		pDlg->PostMessage(WM_PROCESS_FINISHED, 0, 0);
+		return -1;
+	}
+
+	std::string ss;
+
+	pDlg->SendMessage(WM_APPEND_TEXT, 0, reinterpret_cast<LPARAM>(L"Final shaping and added..."));
+	Sleep(2000);
+
+	while (std::getline(fin, ss, '\n')) {
+		if (hCancel && ::WaitForSingleObject(hCancel, 0) == WAIT_OBJECT_0)
+			goto CLEANUP;
+
+		CString RET;
+		RET = ss.c_str();
+		int pos = 0, npos = 0;
+		std::string buf;
+		CString RESNAME, INDEX; //AFH; // AFH is Options
+
+		std::vector<size_t> findVec1 = find_all(ss, "\"resource\": ");
+		std::vector<size_t> findVec2 = find_all(ss, "\"index\": ");
+
+		for (const auto& pos : findVec1) {
+			size_t ps = pos + 12, ds = ss.find(",") - 12;
+			CString BUF;
+			buf = ss.substr(ps, ds);
+			AfxReplaceStr(buf, " ", "");
+			AfxReplaceStr(buf, "0event", "event");
+			AfxReplaceStr(buf, "zsong", "song");
+			AfxReplaceStr(buf, "zevent", "event");
+			AfxReplaceStr(buf, "z016", "016");
+			AfxReplaceStr(buf, "z007", "007");
+			AfxReplaceStr(buf, "yoffer", "offer");
+			AfxReplaceStr(buf, "yicon", "icon");
+			AfxReplaceStr(buf, "yevent", "event");
+			AfxReplaceStr(buf, "ycb_", "cb_");
+			AfxReplaceStr(buf, "yachievement", "achievement");
+			AfxReplaceStr(buf, "y032", "032");
+			AfxReplaceStr(buf, "xmain", "main");
+			AfxReplaceStr(buf, "xex4c", "ex4c");
+			AfxReplaceStr(buf, "xambi", "ambi");
+			AfxReplaceStr(buf, "x015", "015");
+			AfxReplaceStr(buf, "wsystem", "system");
+			AfxReplaceStr(buf, "wstudent", "student");
+			AfxReplaceStr(buf, "wstage2d", "stage2d");
+			AfxReplaceStr(buf, "wsong3", "song3");
+			AfxReplaceStr(buf, "wsong", "song");
+			AfxReplaceStr(buf, "wscrobj", "scrobj");
+			AfxReplaceStr(buf, "wbirth", "birth");
+			AfxReplaceStr(buf, "wachievement", "achievement");
+			fout << buf << ",";
+			BUF = buf.c_str();
+			CMLTDABDDlg::m_hCmbUabRes.AddString(BUF);
+			//pDlg->SendMessage(WM_APPEND_TEXT, 0, reinterpret_cast<LPARAM>(CStringToLPWSTR(BUF)));
+			break;
+		}
+
+		for (const auto& pos : findVec2) {
+			size_t ps = pos + 10, ds = ss.find(",") - 10;
+			CString BUF;
+			buf = ss.substr(ps, ds);
+			fout << buf << "\n";
+			BUF = buf.c_str();
+			pDlg->SendMessage(WM_APPEND_TEXT, 0, reinterpret_cast<LPARAM>(CStringToLPWSTR(BUF)));
+			break;
+		}
+	}
+
+	pDlg->SendMessage(WM_APPEND_TEXT, 0, reinterpret_cast<LPARAM>(L"Completed."));
+	Sleep(2000);
+
+	if (CMLTDABDDlg::SuspendFlag == 1) {
+		CMLTDABDDlg::ProgressThreadFlag = 255;
+		pDlg->PostMessage(WM_PROCESS_FINISHED, 0, 0);
+		return 0;
+	}
+	else {
+		// 処理完了をダイアログに通知（UI スレッド側で EndDialog を呼ぶ）
+		pDlg->PostMessage(WM_PROCESS_FINISHED, 0, 0);
+	}
+
+	CMLTDABDDlg::ProgressThreadFlag = 255;
+	return 0;
+
+CLEANUP:
+	CMLTDABDDlg::SuspendFlag = 1;
+	pDlg->SendMessage(WM_PROCESS_FINISHED, 0, 0);
+	CMLTDABDDlg::ProgressThreadFlag = 255;
+	return 0;
 }
 
 BEGIN_MESSAGE_MAP(CMLTDABDDlg, CDialogEx)
@@ -280,6 +597,9 @@ BOOL CMLTDABDDlg::OnInitDialog()
 			WritePrivateProfileString(_T("MLTD_SERVER"), _T("0x0000"), _T("0"), _T(".\\settings.ini"));
 			CheckRadioButton(IDC_RADIO_SRV_ORIGINAL, IDC_RADIO_SRV_MIRROR, IDC_RADIO_SRV_ORIGINAL);
 		}
+
+		m_hCancelEvent = ::CreateEvent(nullptr, TRUE, FALSE, nullptr);
+		m_pWorkerThread = nullptr;
 
 		return TRUE;  // フォーカスをコントロールに設定した場合を除き、TRUE を返します。
 	}
@@ -523,6 +843,17 @@ void CMLTDABDDlg::OnBnClickedButtonDownload()
 	}
 	INT_PTR ret = selDlg.DoModal();
 	if (ret == IDOK) {
+
+		PROGRESSDLG waitDlg(this);
+
+		// ワーカースレッドの起動（サスペンド状態で生成）
+		m_pWorkerThread = AfxBeginThread(
+			ABDownloadWorkThreadProc,
+			&waitDlg,
+			THREAD_PRIORITY_NORMAL,
+			0,
+			CREATE_SUSPENDED);
+
 		SAVEPATH = selDlg.GetPathName();
 		if (find.FindFile(SAVEPATH)) {
 			DeleteFile(SAVEPATH);
@@ -530,7 +861,31 @@ void CMLTDABDDlg::OnBnClickedButtonDownload()
 		wchar_t Drive[MAX_PATH]{}, Dir[MAX_PATH]{}, Name[MAX_PATH]{}, Ext[MAX_PATH]{};
 		_tsplitpath_s(SAVEPATH, Drive, Dir, Name, Ext);
 		CString DRIVE = Drive, DIR = Dir, NAME = Name, EXT = Ext;
-		DownloadFile(SERVER + VER + _T("/production/") + UNITYVER + OS + INDEX, SAVEPATH, 1024);
+		m_hSavePath = SAVEPATH;
+		m_hDLURI = SERVER + VER + _T("/production/") + UNITYVER + OS + INDEX;
+		m_hDownloadMsg = _T("Downloading:'version") + VER + _T("'...");
+
+		// オートデリート設定（不要ならFALSEに）
+		m_pWorkerThread->m_bAutoDelete = TRUE;
+		m_pWorkerThread->ResumeThread();  // 実行開始
+
+		// モーダル表示（内部で独自メッセージループが動く）
+		waitDlg.DoModal();
+
+		if (CMLTDABDDlg::SuspendFlag == 1) {
+			CMLTDABDDlg::SuspendFlag = 0;
+			MessageBox(_T("処理がキャンセルされました。"), _T("キャンセル"), MB_ICONWARNING | MB_OK);
+			return;
+		}
+		if (CMLTDABDDlg::ExceptionFlag == 1) {
+			CMLTDABDDlg::ExceptionFlag = 0;
+			DWORD err = m_hLastError;
+			CString str;
+			str.Format(_T("エラーが発生しました。\n%u"), err);
+			MessageBox((str), _T("エラー"), MB_ICONERROR | MB_OK);
+			return;
+		}
+
 		if (find.FindFile(SAVEPATH)) {
 			if (223 >= GetFileSizeStat(SAVEPATH)) {
 				DeleteFile(SAVEPATH);
@@ -555,15 +910,15 @@ void CMLTDABDDlg::OnBnClickedButtonDownload()
 					else {
 						ZeroMemory(&savePathT[0], 512);
 						if (EXT == ".data" || EXT == ".DATA") {
-							_tcscpy_s(&savePathT[0], 512, _T("uabmr ") + SAVEPATH + _T(" -d ") + DRIVE + DIR + NAME + _T("_spd.data"));
+							_tcscpy_s(&savePathT[0], 512, _T("cmd.exe /c uabmr ") + SAVEPATH + _T(" -d ") + DRIVE + DIR + NAME + _T("_spd.data"));
 							FP = DRIVE + DIR + NAME + _T("_spd.data");
 						}
 						else if (EXT == ".unity3d" || EXT == ".UNITY3D") {
-							_tcscpy_s(&savePathT[0], 512, _T("uabmr ") + SAVEPATH + _T(" -d ") + DRIVE + DIR + NAME + _T("_spd.unity3d"));
+							_tcscpy_s(&savePathT[0], 512, _T("cmd.exe /c uabmr ") + SAVEPATH + _T(" -d ") + DRIVE + DIR + NAME + _T("_spd.unity3d"));
 							FP = DRIVE + DIR + NAME + _T("_spd.unity3d");
 						}
 						else if (EXT == ".txt" || EXT == ".TXT") {
-							_tcscpy_s(&savePathT[0], 512, _T("uabmr ") + SAVEPATH + _T(" -d ") + DRIVE + DIR + NAME + _T("_spd.txt"));
+							_tcscpy_s(&savePathT[0], 512, _T("cmd.exe /c uabmr ") + SAVEPATH + _T(" -d ") + DRIVE + DIR + NAME + _T("_spd.txt"));
 							FP = DRIVE + DIR + NAME + _T("_spd.txt");
 						}
 						else {
@@ -571,100 +926,74 @@ void CMLTDABDDlg::OnBnClickedButtonDownload()
 						}
 					}
 
-					PROGRESSDLG* Dlg = new PROGRESSDLG;
-					MSG msg;
-					Dlg->Create(IDD_PROGRESSDIALOG);
-					Dlg->ShowWindow(SW_SHOW);
-					while (::PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE)) {
-						if (!AfxGetApp()->PumpMessage())
-						{
-							::PostQuitMessage(0);
-							break;
-						}
-					}
+					m_hSavepathT = savePathT;
+					m_hShapedFilePath = FP;
 
-					STARTUPINFO si;
-					memset(&si, 0, sizeof(STARTUPINFO));
-					PROCESS_INFORMATION pi;
-					memset(&pi, 0, sizeof(PROCESS_INFORMATION));
-					si.dwFlags = STARTF_USESHOWWINDOW;
-					si.wShowWindow = SW_HIDE;
-					::CreateProcess(NULL, savePathT, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi);
+					// ワーカースレッドの起動（サスペンド状態で生成）
+					m_pWorkerThread = AfxBeginThread(
+						ShapingWorkThreadProc,
+						&waitDlg,
+						THREAD_PRIORITY_NORMAL,
+						0,
+						CREATE_SUSPENDED);
 
-					CloseHandle(pi.hThread);
-					WaitForSingleObject(pi.hProcess, INFINITE);
-					CloseHandle(pi.hProcess);
+					// オートデリート設定（不要ならFALSEに）
+					m_pWorkerThread->m_bAutoDelete = TRUE;
+					m_pWorkerThread->ResumeThread();  // 実行開始
 
-					Dlg->DestroyWindow();
-					SAFE_DELETE(Dlg);
+					// モーダル表示（内部で独自メッセージループが動く）
+					waitDlg.DoModal();
+					
 					SAFE_FREE(savePathT);
 
 					DeleteFile(SAVEPATH);
 
+					if (CMLTDABDDlg::SuspendFlag == 1) {
+						CMLTDABDDlg::SuspendFlag = 0;
+						MessageBox(_T("処理がキャンセルされました。"), _T("キャンセル"), MB_ICONWARNING | MB_OK);
+						return;
+					}
+					if (CMLTDABDDlg::ExceptionFlag == 1) {
+						CMLTDABDDlg::ExceptionFlag = 0;
+						DWORD err = m_hLastError;
+						CString str;
+						str.Format(_T("エラーが発生しました。\n%u"), err);
+						MessageBox((str), _T("エラー"), MB_ICONERROR | MB_OK);
+						return;
+					}
+
 					if (find.FindFile(FP)) {
+						
+						// ワーカースレッドの起動（サスペンド状態で生成）
+						m_pWorkerThread = AfxBeginThread(
+							MainShapingWorkThreadProc,
+							&waitDlg,
+							THREAD_PRIORITY_NORMAL,
+							0,
+							CREATE_SUSPENDED);
+
+						// オートデリート設定（不要ならFALSEに）
+						m_pWorkerThread->m_bAutoDelete = TRUE;
+						m_pWorkerThread->ResumeThread();  // 実行開始
+
+						// モーダル表示（内部で独自メッセージループが動く）
+						waitDlg.DoModal();
+
+						if (CMLTDABDDlg::SuspendFlag == 1) {
+							CMLTDABDDlg::SuspendFlag = 0;
+							MessageBox(_T("処理がキャンセルされました。"), _T("キャンセル"), MB_ICONWARNING | MB_OK);
+							return;
+						}
+						if (CMLTDABDDlg::ExceptionFlag == 1) {
+							CMLTDABDDlg::ExceptionFlag = 0;
+							DWORD err = m_hLastError;
+							CString str;
+							str.Format(_T("エラーが発生しました。\n%u"), err);
+							MessageBox((str), _T("エラー"), MB_ICONERROR | MB_OK);
+							return;
+						}
+
 						MessageBox(_T("整形が完了しました。\nUABをダウンロードする場合は、下のコンボボックスから選択して\nダウンロードを行ってください。"), _T("完了"), MB_ICONINFORMATION | MB_OK);
-						//ShellExecute(NULL, _T("open"), FP.Left(FP.ReverseFind('\\')), NULL, NULL, SW_SHOWNORMAL);
-
-						PROGRESSDLG* Dlg = new PROGRESSDLG;
-
-						std::ifstream fin(FP);
-						if (!fin) {
-							MessageBox(_T("予期せぬエラーが発生しました。\n(ファイルを開くことが出来ません。)"), _T("エラー"), MB_ICONERROR | MB_OK);
-							return;
-						}
-
-						std::ofstream fout(".\\uabm.abddata");
-						if (!fout) {
-							MessageBox(_T("予期せぬエラーが発生しました。\n(ファイルを書き込むことが出来ません。)"), _T("エラー"), MB_ICONERROR | MB_OK);
-							return;
-						}
-
-						MSG msg;
-						Dlg->Create(IDD_PROGRESSDIALOG);
-						Dlg->ShowWindow(SW_SHOW);
-						while (::PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE)) {
-							if (!AfxGetApp()->PumpMessage())
-							{
-								::PostQuitMessage(0);
-								break;
-							}
-						}
-
-						std::string ss;
-
-						while (std::getline(fin, ss, '\n')) {
-							CString RET;
-							RET = ss.c_str();
-							int pos = 0, npos = 0;
-							std::string buf;
-							CString RESNAME, INDEX; //AFH; // AFH is Options
-
-							std::vector<size_t> findVec1 = find_all(ss, "\"resource\": ");
-							std::vector<size_t> findVec2 = find_all(ss, "\"index\": ");
-
-							for (const auto& pos : findVec1) {
-								size_t ps = pos + 12, ds = ss.find(",") - 12;
-								CString BUF;
-								buf = ss.substr(ps, ds);
-								AfxReplaceStr(buf, " ", "");
-								fout << buf << ",";
-								BUF = buf.c_str();
-								m_hCmbUabRes.AddString(BUF);
-								break;
-							}
-
-							for (const auto& pos : findVec2) {
-								size_t ps = pos + 10, ds = ss.find(",") - 10;
-								CString BUF;
-								buf = ss.substr(ps, ds);
-								fout << buf << "\n";
-								BUF = buf.c_str();
-								break;
-							}
-						}
-
-						Dlg->DestroyWindow();
-						SAFE_DELETE(Dlg);
 
 						GetDlgItem(IDC_BUTTON_BUNDLEINFO_UPDATE)->EnableWindow(FALSE);
 						GetDlgItem(IDC_BUTTON_DOWNLOAD)->EnableWindow(FALSE);
@@ -710,7 +1039,42 @@ void CMLTDABDDlg::OnBnClickedButtonBundleinfoUpdate()
 		m_hCmbAssetVer.ResetContent();
 		m_hStatic_Hash.SetWindowText(_T("データがありません"));
 		m_hStatic_Date.SetWindowText(_T("データがありません"));
-		DownloadFile(_T("\x68\x74\x74\x70\x73\x3a\x2f\x2f\x61\x70\x69\x2e\x6d\x61\x74\x73\x75\x72\x69\x68\x69\x2e\x6d\x65\x2f\x6d\x6c\x74\x64\x2f\x76\x31\x2f\x76\x65\x72\x73\x69\x6f\x6e\x2f\x61\x73\x73\x65\x74\x73"), _T(".\\vsd.abddata"), 1024);
+
+		PROGRESSDLG waitDlg(this);
+
+		// ワーカースレッドの起動（サスペンド状態で生成）
+		m_pWorkerThread = AfxBeginThread(
+			ABDownloadWorkThreadProc,
+			&waitDlg,
+			THREAD_PRIORITY_NORMAL,
+			0,
+			CREATE_SUSPENDED);
+
+		m_hSavePath = _T(".\\vsd.abddata");
+		m_hDLURI = _T("\x68\x74\x74\x70\x73\x3a\x2f\x2f\x61\x70\x69\x2e\x6d\x61\x74\x73\x75\x72\x69\x68\x69\x2e\x6d\x65\x2f\x6d\x6c\x74\x64\x2f\x76\x31\x2f\x76\x65\x72\x73\x69\x6f\x6e\x2f\x61\x73\x73\x65\x74\x73");
+		m_hDownloadMsg = _T("Downloading: 'vsd'...");
+
+		// オートデリート設定（不要ならFALSEに）
+		m_pWorkerThread->m_bAutoDelete = TRUE;
+		m_pWorkerThread->ResumeThread();  // 実行開始
+
+		// モーダル表示（内部で独自メッセージループが動く）
+		waitDlg.DoModal();
+
+		if (CMLTDABDDlg::SuspendFlag == 1) {
+			CMLTDABDDlg::SuspendFlag = 0;
+			MessageBox(_T("処理がキャンセルされました。"), _T("キャンセル"), MB_ICONWARNING | MB_OK);
+			return;
+		}
+		if (CMLTDABDDlg::ExceptionFlag == 1) {
+			CMLTDABDDlg::ExceptionFlag = 0;
+			DWORD err = m_hLastError;
+			CString str;
+			str.Format(_T("エラーが発生しました。\n%u"), err);
+			MessageBox((str), _T("エラー"), MB_ICONERROR | MB_OK);
+			return;
+		}
+
 		if (find.FindFile(_T(".\\vsd.abddata"))) {
 
 			std::ifstream fin(_T(".\\vsd.abddata"));
@@ -784,7 +1148,7 @@ void CMLTDABDDlg::OnBnClickedButtonBundleinfoUpdate()
 		}
 		else {
 			m_hCmbAssetVer.EnableWindow(FALSE);
-			MessageBox(_T("更新に失敗しました。\nインターネット接続を確認してください。"), _T("UAB更新エラー"), MB_ICONERROR | MB_OK);
+			MessageBox(_T("更新に失敗しました。\nインターネット接続を確認するか、時間を置いて再度実行してください。\n※短時間で複数回のアクセスを行うと、APIのアクセス制限が発生します。"), _T("UAB更新エラー"), MB_ICONERROR | MB_OK);
 			return;
 		}
 	}
@@ -805,6 +1169,16 @@ void CMLTDABDDlg::OnBnClickedButtonBundleinfoUpdate()
 
 void CMLTDABDDlg::OnDestroy() {
 	OutputDebugString(_T("OnDestroy\n"));
+	if(m_pWorkerThread) {
+		// もしまだ走っていたらキャンセル要求
+		::SetEvent(m_hCancelEvent);
+		::WaitForSingleObject(m_pWorkerThread->m_hThread, 2000);
+	}
+	if (m_hCancelEvent) {
+		::CloseHandle(m_hCancelEvent);
+		m_hCancelEvent = nullptr;
+	}
+
 	CDialogEx::OnDestroy();
 
 	DeleteFile(_T(".\\vsd.abddata"));
@@ -923,6 +1297,17 @@ void CMLTDABDDlg::OnBnClickedButtonUabdownload()
 	}
 	INT_PTR ret = selDlg.DoModal();
 	if (ret == IDOK) {
+
+		PROGRESSDLG waitDlg(this);
+
+		// ワーカースレッドの起動（サスペンド状態で生成）
+		m_pWorkerThread = AfxBeginThread(
+			ABDownloadWorkThreadProc,
+			&waitDlg,
+			THREAD_PRIORITY_NORMAL,
+			0,
+			CREATE_SUSPENDED);
+
 		SAVEPATH = selDlg.GetPathName();
 		if (find.FindFile(SAVEPATH)) {
 			DeleteFile(SAVEPATH);
@@ -930,7 +1315,32 @@ void CMLTDABDDlg::OnBnClickedButtonUabdownload()
 		wchar_t Drive[MAX_PATH]{}, Dir[MAX_PATH]{}, Name[MAX_PATH]{}, Ext[MAX_PATH]{};
 		_tsplitpath_s(SAVEPATH, Drive, Dir, Name, Ext);
 		CString DRIVE = Drive, DIR = Dir, NAME = Name, EXT = Ext;
-		DownloadFile(SERVER + VER + _T("/production/") + UNITYVER + OS + INDEX, SAVEPATH, 1024);
+
+		m_hSavePath = SAVEPATH;
+		m_hDLURI = SERVER + VER + _T("/production/") + UNITYVER + OS + INDEX;
+		m_hDownloadMsg = _T("Downloading:'") + RES + _T("'...");
+
+		// オートデリート設定（不要ならFALSEに）
+		m_pWorkerThread->m_bAutoDelete = TRUE;
+		m_pWorkerThread->ResumeThread();  // 実行開始
+
+		// モーダル表示（内部で独自メッセージループが動く）
+		waitDlg.DoModal();
+
+		if (CMLTDABDDlg::SuspendFlag == 1) {
+			CMLTDABDDlg::SuspendFlag = 0;
+			MessageBox(_T("処理がキャンセルされました。"), _T("キャンセル"), MB_ICONWARNING | MB_OK);
+			return;
+		}
+		if (CMLTDABDDlg::ExceptionFlag == 1) {
+			CMLTDABDDlg::ExceptionFlag = 0;
+			DWORD err = m_hLastError;
+			CString str;
+			str.Format(_T("エラーが発生しました。\n%u"), err);
+			MessageBox((str), _T("エラー"), MB_ICONERROR | MB_OK);
+			return;
+		}
+
 		if (find.FindFile(SAVEPATH)) {
 			if (223 >= GetFileSizeStat(SAVEPATH)) {
 				DeleteFile(SAVEPATH);
@@ -947,7 +1357,7 @@ void CMLTDABDDlg::OnBnClickedButtonUabdownload()
 			}
 		}
 		else {
-			MessageBox(_T("ダウンロードに失敗しました。\nインターネット接続を確認してください。"), _T("ダウンロードエラー"), MB_ICONERROR | MB_OK);
+			MessageBox(_T("ダウンロードに失敗しました。\nインターネット接続を確認してください。。"), _T("ダウンロードエラー"), MB_ICONERROR | MB_OK);
 			return;
 		}
 	}

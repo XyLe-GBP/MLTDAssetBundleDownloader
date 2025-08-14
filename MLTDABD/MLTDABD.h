@@ -25,6 +25,7 @@ public:
 	virtual BOOL InitInstance();
 
 // 実装
+	BOOL ThreadFlag = false;
 
 	DECLARE_MESSAGE_MAP()
 };

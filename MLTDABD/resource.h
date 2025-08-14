@@ -39,6 +39,10 @@
 #define IDC_COMBO_UABRES                1014
 #define IDC_BUTTON_UABDOWNLOAD          1015
 #define IDC_BUTTON_UABM_READ            1016
+#define IDC_PROGRESS_MAIN               1018
+#define IDC_STATIC_LOG                  1019
+#define IDC_BUTTON1                     1020
+#define IDC_BUTTON_CANCEL               1020
 #define ID_32771                        32771
 #define ID_32772                        32772
 #define ID_32773                        32773
@@ -49,7 +53,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        147
 #define _APS_NEXT_COMMAND_VALUE         32774
-#define _APS_NEXT_CONTROL_VALUE         1017
+#define _APS_NEXT_CONTROL_VALUE         1021
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif

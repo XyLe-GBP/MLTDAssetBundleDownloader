@@ -27,4 +27,5 @@ DWORD GetFileSizeStat(const wchar_t* fp);
 string AfxReplaceStr(string& replacedStr, string from, string to);
 string TWStringToString(const wstring& arg_wstr);
 wstring StringToWString(const string& arg_str);
+LPWSTR CStringToLPWSTR(const CString& arg_CString_str);
 CString APP_VER();
